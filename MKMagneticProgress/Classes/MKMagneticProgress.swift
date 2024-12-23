@@ -34,11 +34,25 @@ public enum Orientation: Int  {
     
 }
 
+public class MKExtraProgress {
+    let start: CGFloat
+    let end: CGFloat
+    let color: UIColor
+    
+    fileprivate var layer: CAShapeLayer!
+    
+    public init(start: CGFloat, end: CGFloat, color: UIColor) {
+        self.start = max(start, 0.0)
+        self.end = min(end, 1.0)
+        self.color = color
+    }
+}
+
 @IBDesignable
 open class MKMagneticProgress: UIView {
     
     // MARK: - Variables
-    private let titleLabelWidth:CGFloat = 100
+    private let titleLabelWidth: CGFloat = 100
     
     private let percentLabel = UILabel(frame: .zero)
     @IBInspectable open var titleLabel = UILabel(frame: .zero)
@@ -150,6 +164,9 @@ open class MKMagneticProgress: UIView {
     @IBInspectable open private(set) var progress: CGFloat {
         set {
             progressShape?.strokeEnd = newValue
+            extraProgress.forEach { extra in
+                extra.layer?.strokeEnd = min(extra.end, newValue)
+            }
         }
         get {
             return progressShape.strokeEnd
@@ -157,7 +174,14 @@ open class MKMagneticProgress: UIView {
     }
     
     /// Duration for a complete animation from 0.0 to 1.0.
-    open var completeDuration: Double = 2.0
+    open var completeDuration: Double = 0.7
+    
+    open var extraProgress: [MKExtraProgress] = [] {
+        didSet {
+            setupExtras()
+            updateShapes()
+        }
+    }
     
     private var backgroundShape: CAShapeLayer!
     private var progressShape: CAShapeLayer!
@@ -212,10 +236,26 @@ open class MKMagneticProgress: UIView {
         self.addSubview(titleLabel)
     }
     
+    private func setupExtras() {
+        layer.sublayers?.forEach({ layer in
+            if layer.name == "extra" {
+                layer.removeFromSuperlayer()
+            }
+        })
+        extraProgress.forEach { extra in
+            let newLayer = CAShapeLayer()
+            newLayer.name = "extra"
+            newLayer.fillColor   = nil
+            newLayer.strokeStart = extra.start
+            newLayer.strokeEnd   = min(extra.end, progress)
+            layer.addSublayer(newLayer)
+            extra.layer = newLayer
+        }
+    }
+    
     // MARK: - Progress Animation
     
     public func setProgress(progress: CGFloat, animated: Bool = true) {
-        
         if progress > 1.0 {
             return
         }
@@ -223,19 +263,48 @@ open class MKMagneticProgress: UIView {
         var start = progressShape.strokeEnd
         if let presentationLayer = progressShape.presentation(){
             if let count = progressShape.animationKeys()?.count, count > 0  {
-            start = presentationLayer.strokeEnd
+                start = presentationLayer.strokeEnd
             }
         }
         
         let duration = abs(Double(progress - start)) * completeDuration
         percentLabel.text = String(format: percentLabelFormat, progress * 100)
         progressShape.strokeEnd = progress
+        extraProgress.forEach { extra in
+            extra.layer?.strokeEnd = min(extra.end, progress)
+        }
         
         if animated {
             progressAnimation.fromValue = start
             progressAnimation.toValue   = progress
             progressAnimation.duration  = duration
             progressShape.add(progressAnimation, forKey: progressAnimation.keyPath)
+            extraProgress.forEach { extra in
+                let introAnimation = CABasicAnimation(keyPath: "strokeEnd")
+                introAnimation.fromValue = min(start, extra.end)
+                introAnimation.toValue   = min(start, extra.end)
+                introAnimation.duration  = max(max(extra.start - start, start - extra.end), 0.0) * completeDuration
+
+                let progressAnimation = CABasicAnimation(keyPath: "strokeEnd")
+                progressAnimation.beginTime = introAnimation.duration
+                let from = min(max(start, extra.start), extra.end)
+                let to = max(min(extra.end, progress), extra.start)
+                progressAnimation.fromValue = from
+                progressAnimation.toValue   = to
+                progressAnimation.duration  = abs(to - from) * completeDuration
+                
+                let outroAnimation = CABasicAnimation(keyPath: "strokeEnd")
+                outroAnimation.beginTime = introAnimation.duration + progressAnimation.duration
+                outroAnimation.fromValue = to
+                outroAnimation.toValue   = to
+                outroAnimation.duration = duration - outroAnimation.beginTime
+                
+                let groupAnimation = CAAnimationGroup()
+                groupAnimation.duration = duration
+                groupAnimation.animations = [introAnimation, progressAnimation, outroAnimation]
+                
+                extra.layer.add(groupAnimation, forKey: nil)
+            }
         }
     }
     
@@ -247,10 +316,12 @@ open class MKMagneticProgress: UIView {
         
         backgroundShape.frame = bounds
         progressShape.frame   = bounds
+        extraProgress.forEach({ $0.layer.frame = bounds })
         
         let rect = rectForShape()
         backgroundShape.path = pathForShape(rect: rect).cgPath
         progressShape.path   = pathForShape(rect: rect).cgPath
+        extraProgress.forEach({ $0.layer.path = pathForShape(rect: rect).cgPath })
         
         self.titleLabel.frame = CGRect(x: (self.bounds.size.width - titleLabelWidth)/2, y: self.bounds.size.height-50, width: titleLabelWidth, height: 42)
         
@@ -267,15 +338,22 @@ open class MKMagneticProgress: UIView {
         progressShape?.strokeColor = progressShapeColor.cgColor
         progressShape?.lineWidth   = lineWidth - inset
         progressShape?.lineCap     = lineCap.style()
+        extraProgress.forEach { extra in
+            extra.layer.strokeColor = extra.color.cgColor
+            extra.layer.lineWidth   = lineWidth - inset
+            extra.layer.lineCap     = lineCap.style()
+        }
         
         switch orientation {
         case .left:
             titleLabel.isHidden = true
             self.progressShape.transform = CATransform3DMakeRotation( CGFloat.pi / 2, 0, 0, 1.0)
+            self.extraProgress.forEach({ $0.layer.transform = self.progressShape.transform })
             self.backgroundShape.transform = CATransform3DMakeRotation(CGFloat.pi / 2, 0, 0, 1.0)
         case .right:
             titleLabel.isHidden = true
             self.progressShape.transform = CATransform3DMakeRotation( CGFloat.pi * 1.5, 0, 0, 1.0)
+            self.extraProgress.forEach({ $0.layer.transform = self.progressShape.transform })
             self.backgroundShape.transform = CATransform3DMakeRotation(CGFloat.pi * 1.5, 0, 0, 1.0)
         case .bottom:
             titleLabel.isHidden = false
@@ -286,6 +364,7 @@ open class MKMagneticProgress: UIView {
 
             }, completion: nil)
             self.progressShape.transform = CATransform3DMakeRotation( CGFloat.pi * 2, 0, 0, 1.0)
+            self.extraProgress.forEach({ $0.layer.transform = self.progressShape.transform })
             self.backgroundShape.transform = CATransform3DMakeRotation(CGFloat.pi * 2, 0, 0, 1.0)
         case .top:
             titleLabel.isHidden = false
@@ -296,6 +375,7 @@ open class MKMagneticProgress: UIView {
                 
                 }, completion: nil)
             self.progressShape.transform = CATransform3DMakeRotation( CGFloat.pi, 0, 0, 1.0)
+            self.extraProgress.forEach({ $0.layer.transform = self.progressShape.transform })
             self.backgroundShape.transform = CATransform3DMakeRotation(CGFloat.pi, 0, 0, 1.0)
         }
     }
@@ -306,13 +386,13 @@ open class MKMagneticProgress: UIView {
         return bounds.insetBy(dx: lineWidth / 2.0, dy: lineWidth / 2.0)
     }
     private func pathForShape(rect: CGRect) -> UIBezierPath {
-        let startAngle:CGFloat!
-        let endAngle:CGFloat!
+        let startAngle: CGFloat!
+        let endAngle: CGFloat!
         
-        if clockwise{
+        if clockwise {
             startAngle = CGFloat(spaceDegree * .pi / 180.0) + (0.5 * .pi)
             endAngle = CGFloat((360.0 - spaceDegree) * (.pi / 180.0)) + (0.5 * .pi)
-        }else{
+        } else {
             startAngle = CGFloat((360.0 - spaceDegree) * (.pi / 180.0)) + (0.5 * .pi)
             endAngle = CGFloat(spaceDegree * .pi / 180.0) + (0.5 * .pi)
         }

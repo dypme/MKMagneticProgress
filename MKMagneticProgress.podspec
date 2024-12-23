@@ -28,7 +28,7 @@ MKMagneticProgress is a circular progress bar for iOS written in Swift, easy to 
   s.source           = { :git => 'https://github.com/malkouz/MKMagneticProgress.git', :tag => s.version.to_s }
   s.social_media_url = 'https://twitter.com/malkouz'
 
-  s.ios.deployment_target = '8.0'
+  s.ios.deployment_target = '12.0'
 
   s.source_files = 'MKMagneticProgress/Classes/**/*'
   
